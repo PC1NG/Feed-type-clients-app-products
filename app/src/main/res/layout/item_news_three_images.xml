@@ -1,0 +1,85 @@
+<!-- item_news_three_images.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="15dp">
+
+    <!-- 标题 -->
+    <TextView
+        android:id="@+id/tv_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="张雪峰戴婚戒直播回应出轨传闻..."
+        android:textColor="#000000"
+        android:textSize="16sp"
+        android:maxLines="2"
+        android:ellipsize="end"/>
+
+    <!-- 三张图容器 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="80dp"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+
+        <ImageView
+            android:id="@+id/img_1"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:scaleType="centerCrop"
+            android:background="#EEEEEE"
+            android:layout_marginEnd="4dp"/>
+
+        <ImageView
+            android:id="@+id/img_2"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:scaleType="centerCrop"
+            android:background="#EEEEEE"
+            android:layout_marginEnd="4dp"/>
+
+        <ImageView
+            android:id="@+id/img_3"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:scaleType="centerCrop"
+            android:background="#EEEEEE"/>
+    </LinearLayout>
+
+    <!-- 底部信息 (作者、评论等) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tv_author"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="扬子晚报"
+            android:textSize="12sp"
+            android:textColor="#999999"/>
+
+        <TextView
+            android:id="@+id/tv_comment"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text=" 12评论"
+            android:textSize="12sp"
+            android:layout_marginStart="10dp"
+            android:textColor="#999999"/>
+    </LinearLayout>
+
+    <!-- 分割线 -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1px"
+        android:background="#E0E0E0"
+        android:layout_marginTop="10dp"/>
+</LinearLayout>

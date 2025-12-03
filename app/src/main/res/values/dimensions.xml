@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="toolbar_height">56dp </dimen>
+    <dimen name="item_min_height">44dp </dimen>
+    <dimen name="card_radius">8dp </dimen>
+    <dimen name="padding">12dp </dimen>
+    <dimen name="margin">8dp </dimen>
+    <dimen name="radius">12dp </dimen>
+</resources>

@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">My Application</string>
+    <string name="search_hint">羽毛球基本功</string>
+    <string name="btn_publish">发布</string>
+    <string name="btn_ai">头条AI</string>
+    <string name="nav_desc">分类导航</string>
+    <string name="img_desc">图片</string>
+</resources>
