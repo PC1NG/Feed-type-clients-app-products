@@ -6,19 +6,21 @@ import android.os.Looper;
 import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+import androidx.recyclerview.widget.GridLayoutManager;
 import com.google.android.material.tabs.TabLayout;
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.lang.reflect.Type;
+import com.bumptech.glide.Glide;
+import com.example.myapplication.adapter.NewsAdapter;
+import com.example.myapplication.adapter.preload.CardPrerenderer;
+import com.example.myapplication.adapter.preload.LayoutPreloader;
+import com.example.myapplication.adapter.preload.VideoPreloader;
+import com.example.myapplication.adapter.viewholder.BaseViewHolder;
+import com.example.myapplication.model.NewsBean;
+import com.example.myapplication.repository.NewsRepository;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import androidx.recyclerview.widget.GridLayoutManager;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -27,27 +29,44 @@ public class MainActivity extends AppCompatActivity {
     private SwipeRefreshLayout swipeRefreshLayout;
 
     // 记录当前正在显示的文件名，默认为推荐
-    // ⚠️ 请确保你的 assets 目录下有 news_recommend.json 这个文件
     private String currentFileName = "news_recommend.json";
 
     // 内存中的数据缓存
     private List<NewsBean> currentDataList = new ArrayList<>();
+    
+    // 数据仓库（网络+缓存）
+    private NewsRepository newsRepository;
+    
+    // 视频预加载器
+    private VideoPreloader videoPreloader;
+    
+    // XML布局预加载器
+    private LayoutPreloader layoutPreloader;
+    
+    // 卡片预渲染器
+    private CardPrerenderer cardPrerenderer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // === 沉浸式状态栏代码 (保持你之前的设置) ===
+        // 沉浸式状态栏代码
         android.view.Window window = getWindow();
         window.getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
         window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
 
-        // 1. 初始化界面控件和监听器
+        // 1. 初始化数据仓库和预加载器
+        newsRepository = new NewsRepository(this);
+        videoPreloader = new VideoPreloader(this);
+        layoutPreloader = new LayoutPreloader(this);
+        cardPrerenderer = new CardPrerenderer();
+        
+        // 2. 初始化界面控件和监听器
         initView();
 
-        // 2. 首次进入，加载默认数据 (推荐)
-        loadDataFromFile(currentFileName);
+        // 3. 首次进入，加载默认数据 (推荐)
+        loadDataFromRepository(currentFileName);
     }
 
     private void initView() {
@@ -63,24 +82,25 @@ public class MainActivity extends AppCompatActivity {
         gridLayoutManager.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
             @Override
             public int getSpanSize(int position) {
-                // 获取当前卡片的数据
-                int type = adapter.getItemViewType(position);
-
-                // 规则：如果是"单图"模式(Type=1)，我们让它变成双列混排（只占1格）
-                // 其他模式（纯文、三图、视频）保持单列全宽（占2格）
-                if (type == NewsBean.TYPE_SINGLE_IMAGE) {
-                    return 1; // 占一半宽度
-                } else {
-                    return 2; // 占满全宽
-                }
+                // 直接从数据中读取span值，由服务端控制排版
+                return adapter.getSpanSize(position);
             }
         });
 
         recyclerView.setLayoutManager(gridLayoutManager);
 
-        // 初始化 adapter
+        // === 性能优化配置 ===
+        recyclerView.setHasFixedSize(true);           // 固定大小优化
+        recyclerView.setItemViewCacheSize(10);        // 增加缓存数量
+        gridLayoutManager.setItemPrefetchEnabled(true); // 开启预取
+
+        // 初始化 adapter，并设置布局预加载器
         adapter = new NewsAdapter(currentDataList);
+        adapter.setLayoutPreloader(layoutPreloader);
         recyclerView.setAdapter(adapter);
+        
+        // 启动布局预加载（在RecyclerView设置好后）
+        recyclerView.post(() -> layoutPreloader.startPreload(recyclerView));
 
         adapter.setOnItemLongClickListener(position -> {
             new androidx.appcompat.app.AlertDialog.Builder(MainActivity.this)
@@ -99,27 +119,50 @@ public class MainActivity extends AppCompatActivity {
         swipeRefreshLayout.setColorSchemeResources(android.R.color.holo_red_light); // 设置红色转圈
 
         swipeRefreshLayout.setOnRefreshListener(() -> {
-            // 模拟网络延迟 1秒
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                // 核心逻辑：重新读取当前频道文件
-                List<NewsBean> freshData = getNewsFromAssets(currentFileName);
-                if (freshData != null) {
+            // 下拉刷新：强制从网络获取
+            newsRepository.forceRefresh(currentFileName, new NewsRepository.DataCallback() {
+                @Override
+                public void onSuccess(List<NewsBean> data, boolean fromCache) {
                     // 模拟更新：打乱顺序，假装是新新闻
-                    Collections.shuffle(freshData);
-
-                    // 更新 UI
+                    Collections.shuffle(data);
+                    
                     currentDataList.clear();
-                    currentDataList.addAll(freshData);
+                    currentDataList.addAll(data);
                     adapter.setNewData(currentDataList);
-
-                    Toast.makeText(MainActivity.this, "推荐成功", Toast.LENGTH_SHORT).show();
+                    
+                    Toast.makeText(MainActivity.this, "刷新成功", Toast.LENGTH_SHORT).show();
+                    swipeRefreshLayout.setRefreshing(false);
                 }
-                swipeRefreshLayout.setRefreshing(false); // 停止转圈
-            }, 1000);
+
+                @Override
+                public void onError(String message) {
+                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+                    swipeRefreshLayout.setRefreshing(false);
+                }
+            });
         });
 
-        // 初始化 加载更多 (滑动到底部监听)
+        // 初始化 加载更多 (滑动到底部监听) + 性能优化
         recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
+                super.onScrollStateChanged(recyclerView, newState);
+                // 滑动时暂停图片加载，停止后恢复 - 提升滑动流畅性
+                // 更新卡片预渲染器的滑动状态
+                cardPrerenderer.setScrolling(newState != RecyclerView.SCROLL_STATE_IDLE);
+                
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    Glide.with(MainActivity.this).resumeRequests();
+                    // 停止滑动时预加载后面的图片和视频
+                    preloadImages();
+                    preloadVideos();
+                    // 触发卡片预渲染
+                    prerenderCards();
+                } else {
+                    Glide.with(MainActivity.this).pauseRequests();
+                }
+            }
+
             @Override
             public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
                 super.onScrolled(recyclerView, dx, dy);
@@ -139,7 +182,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // === D. 初始化 TabLayout (点击切换) ===
+        //  D. 初始化 TabLayout (点击切换)
         TabLayout tabLayout = findViewById(R.id.tab_layout);
         if (tabLayout != null) {
             String[] tabs = {"关注", "推荐", "热榜", "北京", "发现", "视频"};
@@ -185,6 +228,11 @@ public class MainActivity extends AppCompatActivity {
 
     //切换频道
     private void switchContent(String tabName) {
+        // 切换前停止当前视频播放并清除预加载缓存
+        stopAllVideoPlayback();
+        videoPreloader.clearCache();
+        cardPrerenderer.clearCache();
+        
         // 1. 根据名字映射到对应的 JSON 文件名
         switch (tabName) {
             case "关注":
@@ -209,26 +257,42 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // 2. 读取新文件并刷新列表
-        loadDataFromFile(currentFileName);
+        loadDataFromRepository(currentFileName);
 
         // 3. 切换后自动回到顶部
         recyclerView.scrollToPosition(0);
     }
 
 
-    //从文件读取数据并更新 Adapter
+    /**
+     * 从数据仓库加载数据
+     * 策略：网络优先，失败时使用本地缓存
+     */
+    private void loadDataFromRepository(String fileName) {
+        // 显示加载中
+        swipeRefreshLayout.setRefreshing(true);
+        
+        newsRepository.fetchNews(fileName, new NewsRepository.DataCallback() {
+            @Override
+            public void onSuccess(List<NewsBean> data, boolean fromCache) {
+                currentDataList.clear();
+                currentDataList.addAll(data);
+                adapter.setNewData(currentDataList);
+                recyclerView.post(() -> checkExposure());
+                
+                // 提示数据来源
+                if (fromCache) {
+                    Toast.makeText(MainActivity.this, "网络异常，已加载缓存数据", Toast.LENGTH_SHORT).show();
+                }
+                swipeRefreshLayout.setRefreshing(false);
+            }
 
-    private void loadDataFromFile(String fileName) {
-        List<NewsBean> data = getNewsFromAssets(fileName);
-        if (data != null && !data.isEmpty()) {
-            currentDataList.clear();
-            currentDataList.addAll(data);
-            adapter.setNewData(currentDataList);
-            recyclerView.post(() -> checkExposure());
-        } else {
-            // 如果文件不存在或没数据
-            Toast.makeText(this, "暂无内容: " + fileName, Toast.LENGTH_SHORT).show();
-        }
+            @Override
+            public void onError(String message) {
+                Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+                swipeRefreshLayout.setRefreshing(false);
+            }
+        });
     }
 
     //模拟加载更多
@@ -260,25 +324,49 @@ public class MainActivity extends AppCompatActivity {
         }, 1000);
     }
 
-    //读取 Assets JSON 的底层方法
-    private List<NewsBean> getNewsFromAssets(String fileName) {
-        try {
-            InputStreamReader isr = new InputStreamReader(getAssets().open(fileName), "UTF-8");
-            BufferedReader reader = new BufferedReader(isr);
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                sb.append(line);
+    /**
+     * 图片预加载 - 提前加载即将显示的图片
+     */
+    private void preloadImages() {
+        GridLayoutManager layoutManager = (GridLayoutManager) recyclerView.getLayoutManager();
+        if (layoutManager == null) return;
+
+        int lastVisible = layoutManager.findLastVisibleItemPosition();
+        // 预加载后面5个item的图片
+        for (int i = lastVisible + 1; i <= lastVisible + 5 && i < currentDataList.size(); i++) {
+            NewsBean item = currentDataList.get(i);
+            if (item.images != null && !item.images.isEmpty()) {
+                for (String url : item.images) {
+                    String imagePath = url.startsWith("http") ? url : "file:///android_asset/images/" + url;
+                    Glide.with(this).load(imagePath).preload();
+                }
             }
-            Gson gson = new Gson();
-            Type listType = new TypeToken<List<NewsBean>>() {
-            }.getType();
-            return gson.fromJson(sb.toString(), listType);
-        } catch (Exception e) {
-            e.printStackTrace();
-            // 如果文件找不到，打印错误日志
-            return null;
         }
+    }
+
+    /**
+     * 视频预加载 - 提前加载即将显示的视频封面和数据
+     */
+    private void preloadVideos() {
+        GridLayoutManager layoutManager = (GridLayoutManager) recyclerView.getLayoutManager();
+        if (layoutManager == null) return;
+
+        int lastVisible = layoutManager.findLastVisibleItemPosition();
+        videoPreloader.preloadVideos(currentDataList, lastVisible, position -> {
+            // 预加载完成回调（可选：打印日志）
+            runOnUiThread(() -> logExposure("视频 " + position + " -> 📥 预加载完成"));
+        });
+    }
+
+    /**
+     * 卡片预渲染 - 在空闲时提前触发即将显示的卡片渲染
+     */
+    private void prerenderCards() {
+        GridLayoutManager layoutManager = (GridLayoutManager) recyclerView.getLayoutManager();
+        if (layoutManager == null) return;
+
+        int lastVisible = layoutManager.findLastVisibleItemPosition();
+        cardPrerenderer.prerenderWhenIdle(recyclerView, currentDataList, lastVisible);
     }
 
     // 测试工具：日志输出
@@ -296,6 +384,9 @@ public class MainActivity extends AppCompatActivity {
 
     // 曝光检测
     private java.util.Map<Integer, Integer> exposureStateMap = new java.util.HashMap<>();
+    
+    // 当前正在自动播放的视频位置，-1表示没有
+    private int currentAutoPlayPosition = -1;
 
     private void checkExposure() {
         if (recyclerView == null) return;
@@ -305,6 +396,10 @@ public class MainActivity extends AppCompatActivity {
 
         int firstPos = layoutManager.findFirstVisibleItemPosition();
         int lastPos = layoutManager.findLastVisibleItemPosition();
+
+        // 用于记录最佳自动播放候选（露出比例最大的视频卡片）
+        int bestAutoPlayPos = -1;
+        float bestRatio = 0f;
 
         // 1. 检测可见区域内的 Item (处理露出)
         for (int i = firstPos; i <= lastPos; i++) {
@@ -354,6 +449,18 @@ public class MainActivity extends AppCompatActivity {
                 if (newState != oldState) {
                     exposureStateMap.put(i, newState);
                 }
+
+                // 检查是否为视频卡片，且露出超过50%，记录最佳候选
+                if (ratio >= 0.5f) {
+                    RecyclerView.ViewHolder holder = recyclerView.findViewHolderForAdapterPosition(i);
+                    if (holder instanceof BaseViewHolder) {
+                        BaseViewHolder baseHolder = (BaseViewHolder) holder;
+                        if (baseHolder.isAutoPlayable() && ratio > bestRatio) {
+                            bestRatio = ratio;
+                            bestAutoPlayPos = i;
+                        }
+                    }
+                }
             }
         }
 
@@ -374,6 +481,74 @@ public class MainActivity extends AppCompatActivity {
                 // 彻底移除，防止重复检测
                 it.remove();
             }
+        }
+
+        // 3. 处理视频自动播放逻辑
+        handleVideoAutoPlay(bestAutoPlayPos);
+    }
+
+    /**
+     * 处理视频自动播放
+     * 规则：同一时间只有一个视频自动播放，选择露出比例最大且超过50%的视频
+     */
+    private void handleVideoAutoPlay(int bestAutoPlayPos) {
+        // 如果最佳候选和当前播放的一样，不做处理
+        if (bestAutoPlayPos == currentAutoPlayPosition) {
+            return;
+        }
+
+        // 停止当前正在播放的视频
+        if (currentAutoPlayPosition != -1) {
+            RecyclerView.ViewHolder oldHolder = recyclerView.findViewHolderForAdapterPosition(currentAutoPlayPosition);
+            if (oldHolder instanceof BaseViewHolder) {
+                BaseViewHolder baseHolder = (BaseViewHolder) oldHolder;
+                if (baseHolder.isAutoPlayable()) {
+                    baseHolder.stopAutoPlay();
+                    logExposure("视频 " + currentAutoPlayPosition + " -> ⏹ 自动停止");
+                }
+            }
+        }
+
+        // 开始播放新的视频
+        if (bestAutoPlayPos != -1) {
+            RecyclerView.ViewHolder newHolder = recyclerView.findViewHolderForAdapterPosition(bestAutoPlayPos);
+            if (newHolder instanceof BaseViewHolder) {
+                BaseViewHolder baseHolder = (BaseViewHolder) newHolder;
+                if (baseHolder.isAutoPlayable()) {
+                    baseHolder.startAutoPlay();
+                    logExposure("视频 " + bestAutoPlayPos + " -> ▶ 自动播放");
+                }
+            }
+        }
+
+        currentAutoPlayPosition = bestAutoPlayPos;
+    }
+
+    /**
+     * 停止所有视频播放（切换Tab或页面时调用）
+     */
+    private void stopAllVideoPlayback() {
+        if (currentAutoPlayPosition != -1) {
+            RecyclerView.ViewHolder holder = recyclerView.findViewHolderForAdapterPosition(currentAutoPlayPosition);
+            if (holder instanceof BaseViewHolder) {
+                ((BaseViewHolder) holder).stopAutoPlay();
+            }
+            currentAutoPlayPosition = -1;
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // 释放预加载器资源
+        if (videoPreloader != null) {
+            videoPreloader.release();
+        }
+        if (layoutPreloader != null) {
+            layoutPreloader.clear();
+        }
+        if (cardPrerenderer != null) {
+            cardPrerenderer.clearCache();
         }
     }
 }

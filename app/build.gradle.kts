@@ -45,4 +45,5 @@ dependencies {
     implementation(libs.swiperefreshlayout)
     implementation(libs.glide)
     implementation(libs.gson)
+    implementation(libs.asynclayoutinflater)
 }
